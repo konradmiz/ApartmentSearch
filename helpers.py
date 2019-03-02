@@ -67,19 +67,19 @@ def parse_extra(html):
         cats_allowed = str(html.find_all('p', {'class': 'attrgroup'})[1]).find('cats are')    
         cats = True if cats_allowed != -1 else None
     except:
-        cats = ""
+        cats = None
     
     try:
         dogs_allowed = str(html.find_all('p', {'class': 'attrgroup'})[1]).find('dogs are')
         dogs = True if dogs_allowed != -1 else None
     except:
-        dogs = ""
+        dogs = None
 
     try:
         furnished_there = str(html.find_all('p', {'class': 'attrgroup'})[1]).find('furnished')
         furnished = True if furnished_there != -1 else None
     except:
-        furnished = ""
+        furnished = None
     
     try:
         housing_info = html.find_all('p', {'class': "attrgroup"})[1].text
@@ -167,7 +167,7 @@ def parse_basics(html):
         if sqft == "":
             sqft = np.NaN
         else:
-            sqft = int(price)
+            sqft = int(sqft)
     except:
         sqft = np.NaN
     
@@ -236,6 +236,7 @@ def parse_listing(html_link):
     
 def run_parsing(urls):
     df_list = []
+    
     for i in range(len(urls)):
         df_list.append(parse_listing(urls[i]))
         time.sleep(1 + random.uniform(-1, 1))
@@ -279,24 +280,25 @@ def post_new_apts(my_df, engine, current_date):
         unseen_ids = pd.read_sql('SELECT * FROM temp WHERE "posting_id" NOT IN (SELECT "posting_id" FROM apts)', engine)['posting_id'].values
 
         new_apts = my_df[my_df['posting_id'].isin(unseen_ids)]
-        new_apts['upload_time'] = str(current_date.strftime("%Y-%m-%d %H:%M:%S"))
-        
+        new_apts.loc[:, 'upload_time'] = str(current_date.strftime("%Y-%m-%d %H:%M:%S"))
+        new_apts['upload_time'] = pd.to_datetime(new_apts['upload_time'])
         new_apts.to_sql(name = "apts", if_exists = "append", con = engine)
     except:
-        my_df['upload_time'] = str(current_date.strftime("%Y-%m-%d %H:%M:%S"))
+        my_df.loc[:, 'upload_time'] = str(current_date.strftime("%Y-%m-%d %H:%M:%S"))
+        my_df['upload_time'] = pd.to_datetime(my_df['upload_time'])
         my_df.to_sql(name = "apts", if_exists = "append", con = engine)
 
 
-def post_to_slack(apt_df, slack_token):
-
-    sc = SlackClient(slack_token)
-    
-    for idx, row in apt_df.iloc[:2, ].iterrows():
-    
-        price = row['price']
-        bedrooms = row['bed']
-        bathrooms = row['bath']
-        city = row['city']
-        url = row['url']
-        
-        add_url(sc, price, bedrooms, bathrooms, city, url)
+#def post_to_slack(apt_df, slack_token):
+#
+#    sc = SlackClient(slack_token)
+#    
+#    for idx, row in apt_df.iloc[:2, ].iterrows():
+#    
+#        price = row['price']
+#        bedrooms = row['bed']
+#        bathrooms = row['bath']
+#        city = row['city']
+#        url = row['url']
+#        
+#        add_url(sc, price, bedrooms, bathrooms, city, url)
