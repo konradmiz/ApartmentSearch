@@ -11,6 +11,7 @@ import sys
 import psycopg2
 import pandas as pd
 import time
+import logging
 
 import datetime
 from pytz import timezone
@@ -24,6 +25,10 @@ if sys.platform != "linux":
         except yaml.YAMLError as exc:
             print(exc)
     import helpers
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
+                    filename='C:/Users/Konrad/Documents/CraigslistHousing/Apts.log')  
 else:
     os.chdir("/home/ubuntu/apts")
 
@@ -37,6 +42,12 @@ else:
     os.environ['TZ'] = "US/Pacific"
     time.tzset()
 
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        filename='Apts.log')   
+
+    
 current_date = timezone('US/Pacific').localize(datetime.datetime.now()) 
 
 slack_token = credentials['default']['slack_info']['token']
@@ -48,6 +59,6 @@ my_df = helpers.run_parsing(apt_list)
 engine = create_engine('postgresql://' + db_info['user'] + ":" + db_info['pwd'] + '@' + 
                    db_info['host'] + ':' + str(5432) + '/' + db_info['dbname'])
 
-helpers.post_new_apts(my_df, engine, current_date)
-
+num_apts = helpers.post_new_apts(my_df, engine, current_date)
+helpers.log_apts(num_apts)
 #helpers.post_to_slack(my_df)
