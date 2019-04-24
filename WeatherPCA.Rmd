@@ -1,0 +1,153 @@
+---
+title: "Tech Cities PCA"
+author: "Konrad Miziolek"
+date: "April 23, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(purrr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+```
+
+
+```{r}
+setwd("C:/Users/Konrad/Documents/CraigslistHousing/WeatherData/")
+
+climate <- dir(pattern = "*.csv") %>%
+  map(read_csv, col_types = cols(.default = "c")) %>%
+  bind_rows() %>%
+    select_if(~sum(!is.na(.)) > 0)
+```
+
+```{r}
+stations <- climate %>%
+  select(matches("NAME|PRCP-NORMAL|TMIN-NORMAL|TMAX-NORMAL|SNOW-NORMAL", ignore.case = FALSE)) %>%
+  mutate_at(2:ncol(.), as.numeric) %>%
+  mutate(NAME = str_replace(NAME, ", TX US|, CA US|, WA US|, OR US|, IL US|, NY US|, MA US|, OH US|, WI US|, CO US",""),
+         NAME = str_replace(NAME, regex("MUSEUM|KGW TV|CENTRAL PARK|PORTAGE BAY|UNIVERSITY|6 S|DANE CO REGIONAL AIRPORT|INTERNATIONAL AIRPORT|WATER DEPARTMENT"), ""),
+         NAME = str_replace(NAME, regex("PORT "), ""),
+         NAME = trimws(NAME, "both"))
+
+
+colnames(stations) <- str_replace(colnames(stations), regex("-NORMAL"), "")
+
+colnames(stations) <- sapply(colnames(stations), function(x) {
+  case_when(str_detect(x, "DJF") ~ str_replace(x, "DJF", "Winter"),
+            str_detect(x, "MAM") ~ str_replace(x, "MAM", "Spring"),
+            str_detect(x, "JJA") ~ str_replace(x, "JJA", "Summer"),
+            str_detect(x, "SON") ~ str_replace(x, "SON", "Fall"),
+            str_detect(x, "ANN") ~ str_replace(x, "ANN", "Annual"),
+            str_detect(x, "NAME") ~ str_replace(x, "NAME", "Name"))
+})
+
+```
+
+
+```{r}
+annual <- stations %>%
+  select(matches("Name|Annual"))
+
+seasonal <- stations %>%
+  select(matches("Name|Spring-TMAX|Spring-TMIN|Spring-PRCP|Spring-SNOW|Summer-TMAX|Summer-TMIN|Summer-PRCP|Summer-SNOW|Fall-TMAX|Fall-TMIN|Fall-PRCP|Fall-SNOW|Winter-TMAX|Winter-TMIN|Winter-PRCP|Winter-SNOW"))
+```
+
+Chicago
+
+https://www.weather.gov/lot/chicago_winter_snow
+Spring: 6 in
+Fall: 1.4
+Winter: 28.1
+
+Denver 
+
+https://www.weather.gov/bou/SeasonalSnowfall
+Spring: 22
+Fall: 12.7
+Winter: 22.4
+
+```{r}
+seasonal[seasonal == -7777] <- 0
+seasonal[grepl(x = seasonal$Name, pattern = "SAN FRANCISCO|AUSTIN"), grepl(x = colnames(seasonal), pattern = "SNOW")] <- 0
+
+seasonal[seasonal$Name == "CHICAGO", "Winter-SNOW"] <- 28.1
+seasonal[seasonal$Name == "CHICAGO", "Spring-SNOW"] <- 6
+seasonal[seasonal$Name == "CHICAGO", "Summer-SNOW"] <- 0
+seasonal[seasonal$Name == "CHICAGO", "Fall-SNOW"] <- 1.4
+
+seasonal[seasonal$Name == "DENVER", "Winter-SNOW"] <- 22.4
+seasonal[seasonal$Name == "DENVER", "Spring-SNOW"] <- 22
+seasonal[seasonal$Name == "DENVER", "Summer-SNOW"] <- 0
+seasonal[seasonal$Name == "DENVER", "Fall-SNOW"] <- 12.7
+
+seasonal$`Summer-SNOW` <- NULL
+```
+
+```{r}
+colnames(annual) <- str_replace(colnames(annual), regex("ANN-"), "")
+
+annual$`Annual-SNOW`[annual$Name == "REDWOOD CITY"] <- 0
+annual$`Annual-SNOW`[annual$Name == "CHICAGO"] <- 36
+annual$`Annual-SNOW`[annual$Name == "AUSTIN"] <- 0
+annual$`Annual-SNOW`[annual$Name == "DENVER"] <- 57
+
+annual[is.na(annual)] <- 0
+```
+
+```{r}
+seasonal_pca <- prcomp(seasonal %>% select(-Name), scale = TRUE, center = TRUE)
+
+summary(seasonal_pca)
+
+seasonal_pca_data <- seasonal_pca$x %>%
+  as_tibble() %>%
+  select(PC1, PC2, PC3)
+
+loadings <- seasonal_pca$rotation %>%
+  as_tibble() %>%
+  select(PC1, PC2, PC3) %>%
+  mutate(Var = seasonal %>% select(-Name) %>% colnames(.))
+
+ggplot(seasonal_pca_data, aes(PC1, PC2, color = PC3)) + 
+  geom_jitter() + 
+  geom_text_repel(aes(label = seasonal$Name))
+
+seasonal_hclust <- seasonal %>%
+  select(-Name) %>%
+  scale() %>%
+  dist() %>%
+  hclust()
+
+plot(seasonal_hclust, label = seasonal$Name)
+```
+
+```{r}
+annual_pca <- prcomp(annual %>% select(-Name), scale = TRUE, center = TRUE)
+
+summary(annual_pca)
+
+pca_data <- annual_pca$x %>%
+  as_tibble() %>%
+  select(PC1, PC2)
+
+ggplot(pca_data, aes(PC1, PC2)) + 
+  geom_point() + 
+  geom_text(aes(label = annual$Name))
+
+annual_hclust <- annual %>% 
+  select(-Name) %>%
+  scale() %>%
+  dist() %>%
+  hclust()
+
+plot(annual_hclust, labels = annual$Name)
+
+```
