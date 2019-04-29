@@ -1,0 +1,139 @@
+---
+title: "Craigslist EDA"
+author: "Konrad Miziolek"
+date: "April 28, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(leaflet)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(DBI)
+library(randomForest)
+library(Metrics)
+```
+
+```{r}
+con <- dbConnect(drv = RPostgreSQL::PostgreSQL(),
+                 user = user,
+                 password = pwd,
+                 host = host,
+                 port = port,
+                 dbname = dbname)
+```
+
+```{r}
+cities <- st_read("Cities/Cities2015.shp") %>%
+  st_transform(4326)
+
+neighborhoods <- st_read("Neighborhoods/geo_export_2de7b10a-3509-4977-b0ae-ea78912a4f54.shp")
+
+bay_city_names <- c("San Francisco",
+"Daly City", "Brisbane",
+"South San Francisco", "San Bruno",
+"Millbrae", "Pacifica",
+"Burlingame", "Hillsborough",
+"San Mateo", "Foster City",
+"Belmont", "San Carlos",
+"Redwood City", "Woodside",
+"Atherton", "Menlo Park",
+"Palo Alto", "East Palo Alto",
+"Los Altos", "Mountain View",
+"Sunnyvale", "Cupertino",
+"Santa Clara", "San Jose",
+"Milpitas", "Saratoga",
+"Campbell", "Los Gatos", "Fremont", 
+"Oakland", "Newark",
+"Alameda", "Emeryville",
+"Berkeley", "Albany",
+"El Cerrito", "Richmond")
+
+bay_cities <- cities %>%
+  filter(NAME %in% bay_city_names)
+
+bay_cities_union <- bay_cities %>% lwgeom::st_make_valid() %>% st_union() %>% st_sf()
+
+```
+
+
+```{r}
+posting_hour <- dbGetQuery(con, 
+"SELECT _hour, COUNT(*) 
+FROM (
+    SELECT CASE 
+           WHEN post_time = '' THEN NULL 
+           ELSE date_part('hour', post_time::timestamptz) 
+           END AS _hour 
+           FROM apts
+    ) foo
+GROUP BY _hour")
+
+posting_hour %>%
+  mutate(Frac = count/sum(count)) %>%
+  ggplot(aes(`_hour`, Frac)) + 
+  geom_bar(stat = "identity") + 
+  xlab("Hour Posted")
+
+```
+
+```{r}
+apts <- dbGetQuery(con, "SELECT * FROM apts ORDER BY upload_time DESC LIMIT 5000")
+
+apts_sf <- apts %>%
+  filter(!is.na(lon) & !is.na(lat)) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+ 
+```
+
+```{r}
+within_cities <- st_join(apts_sf, bay_cities, st_within) %>%
+  filter(!is.na(NAME))
+
+within_cities %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(NAME) %>% 
+  count(sort = TRUE) %>%
+  ungroup() %>%
+  mutate(Frac = n/nrow(apts_sf))
+```
+
+
+
+
+```{r}
+leaflet(within_cities) %>%
+  addCircles() %>%
+  addTiles()
+
+```
+
+
+```{r}
+pop <- c("San Francisco", "Berkeley", "Oakland", "San Jose")
+
+
+within_cities <- within_cities %>%
+  mutate(in_pop = ifelse(NAME %in% pop, TRUE, FALSE))
+
+within_cities %>%
+  mutate(roommate = ifelse(stringr::str_detect(description, stringr::regex("roomm|housem|shared ho|private room")),
+                           TRUE, FALSE)) %>%
+  filter(roommate == FALSE) %>%
+  filter(price < 10000 & bed %in% c(0, 1) & bath %in% c(1)) %>%
+  ggplot(aes(price, group = in_pop, fill = in_pop)) + 
+  geom_density(alpha = 0.3)
+
+
+
+```
+
+
+
+
