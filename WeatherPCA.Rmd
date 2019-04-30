@@ -1,5 +1,5 @@
 ---
-title: "Tech Cities PCA"
+title: "Bay Area PCA"
 author: "Konrad Miziolek"
 date: "April 23, 2019"
 output: html_document
@@ -8,6 +8,12 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+I grew up in Portland, and my favorite weather is on those sunny days between May and October when the high hits 75 and the sky is a deep blue. However, surviving those drab and dreary days from November to March is a challenge, especially after two or three days of not seeing the sun. On the other hand, there seems to be a common refrain about the variability of weather in the Bay area, including within San Francisco (e.g. https://www.worldatlas.com/articles/the-microclimates-of-san-francisco.html). I saw this on a long weekend a few years ago, where the weather I experienced in Berkeley, Burlingame, and Palo Alto was all different. So, the only logical thing to do is to look at 30-year climate normals (long-term averages) for different meteorological stations around the Bay, identify how they compare to each other, and identify which ones are most similar to Portland.
+
+
+I hand-picked stations across the Bay Area, as well as a station from Portland and Seattle from https://gis.ncdc.noaa.gov/maps/ncei/normals. These stations provide 30-year averages for common variables such as minimum and maximum temperature, rain and snow totals, and variables such as growing, heating, and cooling degree days. These 30-year averages span 1980-2010 so they're a little dated, and while I showed in an earlier post that the 2010s have been warmer than earlier decades, this is the best data easily available. Additionally, I'll assume that rates of change in climate over the last 10 years have been the same for the Bay and Portland (and so differences in rate of change can be ignored).   
+
 
 ```{r}
 library(readr)
@@ -22,43 +28,81 @@ library(ggrepel)
 ```{r}
 setwd("C:/Users/Konrad/Documents/CraigslistHousing/WeatherData/")
 
-climate <- dir(pattern = "*.csv") %>%
-  map(read_csv, col_types = cols(.default = "c")) %>%
-  bind_rows() %>%
-    select_if(~sum(!is.na(.)) > 0)
+climate <- read_csv("WeatherData.csv")
+
+
 ```
 
 ```{r}
+# Keep variables relating to precipitation, temperature, and snow
+
 stations <- climate %>%
   select(matches("NAME|PRCP-NORMAL|TMIN-NORMAL|TMAX-NORMAL|SNOW-NORMAL", ignore.case = FALSE)) %>%
   mutate_at(2:ncol(.), as.numeric) %>%
-  mutate(NAME = str_replace(NAME, ", TX US|, CA US|, WA US|, OR US|, IL US|, NY US|, MA US|, OH US|, WI US|, CO US",""),
-         NAME = str_replace(NAME, regex("MUSEUM|KGW TV|CENTRAL PARK|PORTAGE BAY|UNIVERSITY|6 S|DANE CO REGIONAL AIRPORT|INTERNATIONAL AIRPORT|WATER DEPARTMENT"), ""),
-         NAME = str_replace(NAME, regex("PORT "), ""),
-         NAME = trimws(NAME, "both"))
+  mutate(Name = str_replace(NAME, ", TX US|, CA US|, WA US|, OR US|, IL US|, NY US|, MA US|, OH US|, WI US|, CO US",""),
+         Name = str_replace(Name, regex("MUSEUM|KGW TV|CENTRAL PARK|PORTAGE BAY|UNIVERSITY|6 S|DANE CO REGIONAL AIRPORT|INTERNATIONAL AIRPORT|WATER DEPARTMENT"), ""),
+         Name = str_replace(Name, regex("PORT "), ""),
+         Name = trimws(Name, "both")) %>%
+  select(-NAME) %>%
+  select(Name, everything())
 
-
+# All variables are "Normals" and so we can drop that from the column names
 colnames(stations) <- str_replace(colnames(stations), regex("-NORMAL"), "")
 
+# Map month initials to season
+# E.g. "December", "January", "February" are Winter
 colnames(stations) <- sapply(colnames(stations), function(x) {
   case_when(str_detect(x, "DJF") ~ str_replace(x, "DJF", "Winter"),
             str_detect(x, "MAM") ~ str_replace(x, "MAM", "Spring"),
             str_detect(x, "JJA") ~ str_replace(x, "JJA", "Summer"),
             str_detect(x, "SON") ~ str_replace(x, "SON", "Fall"),
             str_detect(x, "ANN") ~ str_replace(x, "ANN", "Annual"),
-            str_detect(x, "NAME") ~ str_replace(x, "NAME", "Name"))
+            TRUE ~ x)
 })
 
 ```
 
+
+Renaming stations to better match their geographic location
+
+```{r}
+stations$Name[stations$Name == "MOFFETT FEDERAL AIRFIELD"] <- "SUNNYVALE"
+stations$Name[stations$Name == "WOODSIDE FIRE STATION 1"] <- "WOODSIDE"
+stations$Name[stations$Name == "PACIFICA 4 SSE"] <- "PACIFICA"
+
+
+# This is SFO, the "International Airport" was dropped in the chunk above. It's closest to Milbrae
+stations$Name[stations$Name == "SAN FRANCISCO"] <- "MILBRAE"
+```
+
+Divide the data into annual normals and seasonal normals
 
 ```{r}
 annual <- stations %>%
   select(matches("Name|Annual"))
 
 seasonal <- stations %>%
-  select(matches("Name|Spring-TMAX|Spring-TMIN|Spring-PRCP|Spring-SNOW|Summer-TMAX|Summer-TMIN|Summer-PRCP|Summer-SNOW|Fall-TMAX|Fall-TMIN|Fall-PRCP|Fall-SNOW|Winter-TMAX|Winter-TMIN|Winter-PRCP|Winter-SNOW"))
+  select(matches("Name|Spring|Summer|Fall|Winter"))
 ```
+
+
+Missing value imputation
+
+Fortunately, not many values were missing -- and the data was available at the weather.gov website (run by NOAA)
+
+
+Unused code
+```{r eval = FALSE, echo = FALSE, include=FALSE}
+
+# Read all weather data CSV files, and treat all fields as characters
+# (I had issues binding variables because. of incompatible types)
+# Keep columns that aren't entirely NA. 
+
+climate <- dir(pattern = "*.csv") %>%
+  map(read_csv, col_types = cols(.default = "c")) %>%
+  bind_rows() %>%
+  select_if(~sum(!is.na(.)) > 0)
+
 
 Chicago
 
@@ -74,10 +118,6 @@ Spring: 22
 Fall: 12.7
 Winter: 22.4
 
-```{r}
-seasonal[seasonal == -7777] <- 0
-seasonal[grepl(x = seasonal$Name, pattern = "SAN FRANCISCO|AUSTIN"), grepl(x = colnames(seasonal), pattern = "SNOW")] <- 0
-
 seasonal[seasonal$Name == "CHICAGO", "Winter-SNOW"] <- 28.1
 seasonal[seasonal$Name == "CHICAGO", "Spring-SNOW"] <- 6
 seasonal[seasonal$Name == "CHICAGO", "Summer-SNOW"] <- 0
@@ -88,19 +128,41 @@ seasonal[seasonal$Name == "DENVER", "Spring-SNOW"] <- 22
 seasonal[seasonal$Name == "DENVER", "Summer-SNOW"] <- 0
 seasonal[seasonal$Name == "DENVER", "Fall-SNOW"] <- 12.7
 
-seasonal$`Summer-SNOW` <- NULL
-```
-
-```{r}
-colnames(annual) <- str_replace(colnames(annual), regex("ANN-"), "")
-
-annual$`Annual-SNOW`[annual$Name == "REDWOOD CITY"] <- 0
 annual$`Annual-SNOW`[annual$Name == "CHICAGO"] <- 36
 annual$`Annual-SNOW`[annual$Name == "AUSTIN"] <- 0
 annual$`Annual-SNOW`[annual$Name == "DENVER"] <- 57
 
+# No annual snowfall
+seasonal[grepl(x = seasonal$Name, pattern = "SAN FRANCISCO"), 
+         grepl(x = colnames(seasonal), pattern = "SNOW")] <- 0
+
+
+seasonal$`Summer-SNOW` <- NULL
+
+
+annual$`Annual-SNOW`[annual$Name == "REDWOOD CITY"] <- 0
+
+```
+
+```{r}
+seasonal[seasonal == -7777] <- 0 # Missing data flag
+
+# No cities had snowfall except during the winter
+
+seasonal <- seasonal %>%
+  select(-`Spring-SNOW`, -`Summer-SNOW`, -`Fall-SNOW`)
+
+seasonal[is.na(seasonal)] <- 0
+```
+
+
+```{r}
+colnames(annual) <- str_replace(colnames(annual), regex("ANN-"), "")
+
 annual[is.na(annual)] <- 0
 ```
+
+
 
 ```{r}
 seasonal_pca <- prcomp(seasonal %>% select(-Name), scale = TRUE, center = TRUE)
@@ -111,7 +173,7 @@ seasonal_pca_data <- seasonal_pca$x %>%
   as_tibble() %>%
   select(PC1, PC2, PC3)
 
-loadings <- seasonal_pca$rotation %>%
+seasonal_loadings <- seasonal_pca$rotation %>%
   as_tibble() %>%
   select(PC1, PC2, PC3) %>%
   mutate(Var = seasonal %>% select(-Name) %>% colnames(.))
@@ -134,20 +196,17 @@ annual_pca <- prcomp(annual %>% select(-Name), scale = TRUE, center = TRUE)
 
 summary(annual_pca)
 
-pca_data <- annual_pca$x %>%
+annual_pca_data <- annual_pca$x %>%
   as_tibble() %>%
   select(PC1, PC2)
 
-ggplot(pca_data, aes(PC1, PC2)) + 
+annual_loadings <- annual_pca$rotation %>%
+  as_tibble() %>%
+  select(PC1, PC2, PC3) %>%
+  mutate(Var = annual %>% select(-Name) %>% colnames(.))
+
+ggplot(annual_pca_data, aes(PC1, PC2)) + 
   geom_point() + 
-  geom_text(aes(label = annual$Name))
-
-annual_hclust <- annual %>% 
-  select(-Name) %>%
-  scale() %>%
-  dist() %>%
-  hclust()
-
-plot(annual_hclust, labels = annual$Name)
+  geom_text_repel(aes(label = annual$Name))
 
 ```
