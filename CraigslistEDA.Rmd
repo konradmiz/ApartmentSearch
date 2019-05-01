@@ -21,12 +21,14 @@ library(Metrics)
 ```
 
 ```{r}
+credentials <- config::get(file = "C:/Users/Konrad/Documents/CraigslistHousing/db_info.yml")
+
 con <- dbConnect(drv = RPostgreSQL::PostgreSQL(),
-                 user = user,
-                 password = pwd,
-                 host = host,
-                 port = port,
-                 dbname = dbname)
+                 user = credentials$database_info$user,
+                 password = credentials$database_info$pwd,
+                 host = credentials$database_info$host,
+                 port = credentials$database_info$port,
+                 dbname = credentials$database_info$dbname)
 ```
 
 ```{r}
@@ -62,6 +64,11 @@ bay_cities_union <- bay_cities %>% lwgeom::st_make_valid() %>% st_union() %>% st
 
 ```
 
+```{r}
+dbGetQuery(con, "SELECT COUNT(DISTINCT posting_id) FROM apts")
+
+```
+
 
 ```{r}
 posting_hour <- dbGetQuery(con, 
@@ -84,7 +91,22 @@ posting_hour %>%
 ```
 
 ```{r}
-apts <- dbGetQuery(con, "SELECT * FROM apts ORDER BY upload_time DESC LIMIT 5000")
+apts <- dbGetQuery(con, "SELECT * FROM apts 
+                         WHERE lon IS NOT NULL 
+                         AND lat IS NOT NULL 
+                         AND price < 10000
+                         AND bed IS NOT NULL
+                         AND bath IS NOT NULL
+                         ORDER BY upload_time DESC 
+                         LIMIT 5000")
+
+apts <- apts %>% 
+  mutate(roommate = ifelse(stringr::str_detect(description, 
+                                               stringr::regex("roomm|housem|shared ho|private room")),
+                           TRUE, FALSE)) %>%
+  filter(roommate == FALSE) %>%
+  distinct(bed, bath, price, title, .keep_all = TRUE)
+
 
 apts_sf <- apts %>%
   filter(!is.na(lon) & !is.na(lat)) %>%
@@ -93,10 +115,37 @@ apts_sf <- apts %>%
 ```
 
 ```{r}
+num_postings <- dbGetQuery(con, "SELECT _month, _day, count(*) as num_listings
+                FROM (SELECT date_part('month', upload_time) as _month, 
+                              date_part('day', upload_time) as _day 
+                      FROM apts
+                      WHERE price > 3000) x 
+                GROUP BY _month, _day
+                HAVING count(*) > 1
+                ORDER BY _day")
+
+num_postings_wknd <- num_postings %>%
+  mutate(Date = as_date(paste0('2019-0', `_month`, "-", `_day`)),
+         Weekend = ifelse(wday(Date, label = TRUE) %in% c("Sat", "Sun"), TRUE, FALSE))
+
+ggplot(num_postings_wknd, aes(`_day`, num_listings, fill = Weekend)) + 
+  geom_bar(stat = "identity")
+
+
+num_postings %>%
+  ggplot(aes(num_listings)) + 
+  geom_histogram(bins = 6)
+
+t.test(num_postings_wknd$num_listings ~ num_postings_wknd$Weekend)
+
+```
+
+
+```{r}
 within_cities <- st_join(apts_sf, bay_cities, st_within) %>%
   filter(!is.na(NAME))
 
-within_cities %>% 
+city_count <- within_cities %>% 
   st_set_geometry(NULL) %>% 
   group_by(NAME) %>% 
   count(sort = TRUE) %>%
@@ -108,32 +157,83 @@ within_cities %>%
 
 
 ```{r}
-leaflet(within_cities) %>%
-  addCircles() %>%
+city_count_sf <- cities %>%
+  inner_join(city_count)
+
+city_col <- colorNumeric(palette = "viridis", domain = sqrt(city_count_sf$Frac))
+
+
+leaflet(city_count_sf) %>%
+  addPolygons(fillColor = city_col(sqrt(city_count_sf$Frac)),
+              fillOpacity = 0.6,
+              color = "black", weight = 0.5) %>%
   addTiles()
+
 
 ```
 
 
 ```{r}
+top_20 <- city_count %>%
+  top_n(16, n) %>%
+  pull(NAME)
+
+upperq <- quantile(most_popular_cities$price)[4]
+lowerq = quantile(most_popular_cities$price)[2]
+
+iqr <- upperq - lowerq
+
+most_popular_cities <- within_cities %>%
+  st_set_geometry(NULL) %>%
+  filter(NAME %in% top_20 & bath > 0 & price < upperq + 1.5*iqr) %>%
+  group_by(bed, bath, NAME) %>%
+  add_count() %>%
+  filter(n > 2)
+
+ggplot(most_popular_cities, aes(price, group = bed, fill = as.factor(bed))) + 
+  geom_density(alpha = 0.3) + 
+  facet_wrap(NAME ~., scales = "free_y") + 
+  ylab("") + 
+  theme_bw() + 
+  theme(axis.text.y = element_blank())
+
 pop <- c("San Francisco", "Berkeley", "Oakland", "San Jose")
 
 
-within_cities <- within_cities %>%
-  mutate(in_pop = ifelse(NAME %in% pop, TRUE, FALSE))
+within_cities %>% filter(NAME == "Mountain View" & price < 2250) %>%
+  pull(url)
+  #nrow()
 
-within_cities %>%
-  mutate(roommate = ifelse(stringr::str_detect(description, stringr::regex("roomm|housem|shared ho|private room")),
-                           TRUE, FALSE)) %>%
-  filter(roommate == FALSE) %>%
-  filter(price < 10000 & bed %in% c(0, 1) & bath %in% c(1)) %>%
-  ggplot(aes(price, group = in_pop, fill = in_pop)) + 
-  geom_density(alpha = 0.3)
+within_cities %>% filter(NAME == "Redwood City" & price < 2250) %>%
+  #pull(description)
+  nrow()
 
+most_popular_cities %>%
+  filter(NAME %in% c("Berkeley", "Oakland", "San Francisco", "San Jose", "Santa Clara", "Redwood City", "San Mateo")) %>%
+  ggplot(aes(price, group = as.factor(bed), color = as.factor(bed))) + 
+  stat_ecdf() + 
+  facet_wrap(. ~ NAME) + 
+  geom_vline(xintercept = 2500, color = "red") +
+  geom_hline(yintercept = 0.5, color = "blue") 
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
 
 
 ```
 
+```{r}
+apts_up <- apts %>%
+  mutate(FracSpecial = str_count(description, regex("[A-Z]|!|\\*"))/nchar(description))
 
+
+cor(apts_up$FracSpecial, apts_up$price)
+
+
+ggplot(apts_up, aes(FracSpecial, price)) + 
+  geom_point(alpha = 0.4) +
+  geom_smooth() #+ 
+  facet_grid(bed ~ bath)
+
+
+```
 
 
