@@ -9,13 +9,17 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Summary
+
 I grew up in Portland, and my favorite weather is on those sunny days between May and October when the high hits 75 and the sky is a deep blue. However, surviving those drab and dreary days from November to March is a challenge, especially after two or three days of not seeing the sun. On the other hand, there seems to be a common refrain about the variability of weather in the Bay area, including within San Francisco (e.g. https://www.worldatlas.com/articles/the-microclimates-of-san-francisco.html). I saw this on a long weekend a few years ago, where the weather I experienced in Berkeley, Burlingame, and Palo Alto was all different. So, the only logical thing to do is to look at 30-year climate normals (long-term averages) for different meteorological stations around the Bay, identify how they compare to each other, and identify which ones are most similar to Portland.
 
+***
 
-I hand-picked stations across the Bay Area, as well as a station from Portland and Seattle from https://gis.ncdc.noaa.gov/maps/ncei/normals. These stations provide 30-year averages for common variables such as minimum and maximum temperature, rain and snow totals, and variables such as growing, heating, and cooling degree days. These 30-year averages span 1980-2010 so they're a little dated, and while I showed in an earlier post that the 2010s have been warmer than earlier decades, this is the best data easily available. Additionally, I'll assume that rates of change in climate over the last 10 years have been the same for the Bay and Portland (and so differences in rate of change can be ignored).   
+I hand-picked stations across the Bay Area, as well as a station from Portland and Seattle (to serve as an outgroup) from https://gis.ncdc.noaa.gov/maps/ncei/normals. These stations provide 30-year averages for common variables such as minimum and maximum temperature, rain and snow totals, and variables such as growing, heating, and cooling degree days. I concatenated the variables for these into the file called "WeatherData.csv". These 30-year averages span 1980-2010 so they're a little dated, and while I showed in an earlier post that the 2010s have been warmer than earlier decades, this is the best data easily available. Additionally, I'll assume that rates of change in climate over the last 10 years have been the same for the Bay and Portland (and so differences in rate of change can be ignored).   
 
+### Loading the climate data
 
-```{r}
+```{r, message=FALSE}
 library(readr)
 library(purrr)
 library(dplyr)
@@ -25,32 +29,27 @@ library(ggrepel)
 ```
 
 
-```{r}
-setwd("C:/Users/Konrad/Documents/CraigslistHousing/WeatherData/")
-
+```{r, message=FALSE}
 climate <- read_csv("WeatherData.csv")
-
-
 ```
+
+### Cleaning up the data
 
 ```{r}
 # Keep variables relating to precipitation, temperature, and snow
+# All variables except for the station name (column 1) should be numeric
+# State name not necessary
+# All variables are "Normals" and so we can drop that from the column names
+# Map month initials to season e.g. "December", "January", "February" are Winter
 
 stations <- climate %>%
   select(matches("NAME|PRCP-NORMAL|TMIN-NORMAL|TMAX-NORMAL|SNOW-NORMAL", ignore.case = FALSE)) %>%
   mutate_at(2:ncol(.), as.numeric) %>%
-  mutate(Name = str_replace(NAME, ", TX US|, CA US|, WA US|, OR US|, IL US|, NY US|, MA US|, OH US|, WI US|, CO US",""),
-         Name = str_replace(Name, regex("MUSEUM|KGW TV|CENTRAL PARK|PORTAGE BAY|UNIVERSITY|6 S|DANE CO REGIONAL AIRPORT|INTERNATIONAL AIRPORT|WATER DEPARTMENT"), ""),
-         Name = str_replace(Name, regex("PORT "), ""),
-         Name = trimws(Name, "both")) %>%
-  select(-NAME) %>%
-  select(Name, everything())
+  mutate(Name = str_replace(NAME, regex(", CA US|, WA US|, OR US"),"")) %>%
+  select(-NAME)
 
-# All variables are "Normals" and so we can drop that from the column names
 colnames(stations) <- str_replace(colnames(stations), regex("-NORMAL"), "")
 
-# Map month initials to season
-# E.g. "December", "January", "February" are Winter
 colnames(stations) <- sapply(colnames(stations), function(x) {
   case_when(str_detect(x, "DJF") ~ str_replace(x, "DJF", "Winter"),
             str_detect(x, "MAM") ~ str_replace(x, "MAM", "Spring"),
@@ -66,14 +65,26 @@ colnames(stations) <- sapply(colnames(stations), function(x) {
 Renaming stations to better match their geographic location
 
 ```{r}
+stations$Name[stations$Name == "OAKLAND MUSEUM"] <- "OAKLAND"
+stations$Name[stations$Name == "PORTLAND KGW TV"] <- "PORTLAND"
+stations$Name[stations$Name == "SEATTLE PORTAGE BAY"] <- "SEATTLE"
+stations$Name[stations$Name == "SAN FRANCISCO INTERNATIONAL AIRPORT"] <- "MILBRAE"
+
 stations$Name[stations$Name == "MOFFETT FEDERAL AIRFIELD"] <- "SUNNYVALE"
 stations$Name[stations$Name == "WOODSIDE FIRE STATION 1"] <- "WOODSIDE"
 stations$Name[stations$Name == "PACIFICA 4 SSE"] <- "PACIFICA"
-
-
-# This is SFO, the "International Airport" was dropped in the chunk above. It's closest to Milbrae
-stations$Name[stations$Name == "SAN FRANCISCO"] <- "MILBRAE"
 ```
+
+Fortunately, not many values were missing -- and the data was available at the weather.gov website (run by NOAA)
+
+```{r}
+# Missing data flag for snowfall -- actual value is 0
+stations[stations == -7777] <- 0 
+
+# No cities had snowfall except during the winter
+stations[is.na(stations)] <- 0
+```
+
 
 Divide the data into annual normals and seasonal normals
 
@@ -81,107 +92,92 @@ Divide the data into annual normals and seasonal normals
 annual <- stations %>%
   select(matches("Name|Annual"))
 
-seasonal <- stations %>%
-  select(matches("Name|Spring|Summer|Fall|Winter"))
-```
-
-
-Missing value imputation
-
-Fortunately, not many values were missing -- and the data was available at the weather.gov website (run by NOAA)
-
-
-Unused code
-```{r eval = FALSE, echo = FALSE, include=FALSE}
-
-# Read all weather data CSV files, and treat all fields as characters
-# (I had issues binding variables because. of incompatible types)
-# Keep columns that aren't entirely NA. 
-
-climate <- dir(pattern = "*.csv") %>%
-  map(read_csv, col_types = cols(.default = "c")) %>%
-  bind_rows() %>%
-  select_if(~sum(!is.na(.)) > 0)
-
-
-Chicago
-
-https://www.weather.gov/lot/chicago_winter_snow
-Spring: 6 in
-Fall: 1.4
-Winter: 28.1
-
-Denver 
-
-https://www.weather.gov/bou/SeasonalSnowfall
-Spring: 22
-Fall: 12.7
-Winter: 22.4
-
-seasonal[seasonal$Name == "CHICAGO", "Winter-SNOW"] <- 28.1
-seasonal[seasonal$Name == "CHICAGO", "Spring-SNOW"] <- 6
-seasonal[seasonal$Name == "CHICAGO", "Summer-SNOW"] <- 0
-seasonal[seasonal$Name == "CHICAGO", "Fall-SNOW"] <- 1.4
-
-seasonal[seasonal$Name == "DENVER", "Winter-SNOW"] <- 22.4
-seasonal[seasonal$Name == "DENVER", "Spring-SNOW"] <- 22
-seasonal[seasonal$Name == "DENVER", "Summer-SNOW"] <- 0
-seasonal[seasonal$Name == "DENVER", "Fall-SNOW"] <- 12.7
-
-annual$`Annual-SNOW`[annual$Name == "CHICAGO"] <- 36
-annual$`Annual-SNOW`[annual$Name == "AUSTIN"] <- 0
-annual$`Annual-SNOW`[annual$Name == "DENVER"] <- 57
-
-# No annual snowfall
-seasonal[grepl(x = seasonal$Name, pattern = "SAN FRANCISCO"), 
-         grepl(x = colnames(seasonal), pattern = "SNOW")] <- 0
-
-
-seasonal$`Summer-SNOW` <- NULL
-
-
-annual$`Annual-SNOW`[annual$Name == "REDWOOD CITY"] <- 0
-
-```
-
-```{r}
-seasonal[seasonal == -7777] <- 0 # Missing data flag
-
-# No cities had snowfall except during the winter
-
-seasonal <- seasonal %>%
-  select(-`Spring-SNOW`, -`Summer-SNOW`, -`Fall-SNOW`)
-
-seasonal[is.na(seasonal)] <- 0
-```
-
-
-```{r}
 colnames(annual) <- str_replace(colnames(annual), regex("ANN-"), "")
 
-annual[is.na(annual)] <- 0
+seasonal <- stations %>%
+  select(matches("Name|Spring|Summer|Fall|Winter")) %>%
+  select(-`Spring-SNOW`, -`Summer-SNOW`, -`Fall-SNOW`)
 ```
 
+### Statistical Analysis
 
+I used two statistical tools (unsupervised learning) to understand the data and find the most similar weather to Portland: Principal Component Analysis (PCA) and Heirarchical Clustering. 
+
+
+PCA is a technique of reducing high-dimensional data (in this case, `r annual %>% select(-Name) %>% ncol()`-D for annual and `r seasonal %>% select(-Name) %>% ncol()`-D for seasonal) into a lower dimensionality. It does this by creating new variables, called Principal Components, which are linear combinations of the variables in the original dataset. In essence, PCA creates new, uncorrelated (orthogonal) dimensions in such a way that each successive dimension explains as much of the variability as possible. Typically the first 2-3 principal components explain nearly all of the variability, and so the dimensionality of the data can be reduced to 2-3 dimensions. This makes it easier to visualize, and these dimensions may reveal insight into how variables interrelate. PCA is typically run with more observations than dimensions (in which case it returns the same number of dimensions as the data). 
+
+
+Heirarchical clustering is a form of cluster analysis that groups related observations by their similarity (alternately, by their dissimilarity). Unlike k-means, the number of clusters is not specified _a priori_; instead, a tree is built, showing which observations are most similar to each other. These trees may look like phylogenetic trees, and, indeed, these concepts are closely related. 
+
+
+In applications where the similarity of observations is identified, there are a couple key considerations: 
+
+* Choice of distance measure. Here, Euclidean distance is satisfactory for both techniques since the variables are numeric and aren't one-hot encoded (e.g. as binary variables). 
+
+* Whether the data should be scaled (normalized). In cases where the variables aren't on the same scale (e.g., the range of max temperature across cities is much higher than snowfall), variables with larger scales typically have an outsized impact on variance and distance and outweigh variables on a smaller scale. Scaling and centering the data means that we can compare winter snowfall and summer maximum temperatures on an apples-to-apples basis.  
+
+
+#### PCA in R
+
+Conducting PCA is straightforward in R. PCA outputs component scores (the new 'coordinate values' of the transformed data points), loadings (eigenvectors multiplied by the variances, for each component), and the cumulative sum of variance explained by these components.   
+
+
+Cumulative sum of variance explained: 
+
+```{r}
+annual_pca <- prcomp(annual %>% select(-Name), scale = TRUE, center = TRUE)
+
+summary(annual_pca)$importance
+```
+
+Loadings (importance of variables for the different components):
+
+```{r}
+annual_loadings <- annual_pca$rotation %>%
+  as_tibble() %>%
+  select(PC1, PC2, PC3) %>%
+  mutate(Var = annual %>% select(-Name) %>% colnames(.)) %>%
+  mutate_if(is.numeric, round, 4)
+
+annual_loadings
+```
+
+New coordinate scores, and their visualization. 
+
+```{r}
+annual_pca_data <- annual_pca$x %>%
+  as_tibble() %>%
+  select(PC1, PC2)
+
+ggplot(annual_pca_data, aes(PC1, PC2)) + 
+  geom_point() + 
+  geom_text_repel(aes(label = annual$Name))
+
+```
+
+While this shows that some cities are close together (Portland and Seattle, Milbrae and Oakland), it doesn't identify how closely they are related, and how the entire dataset compares. Because of that, I used hierarcical clustering to answer that.
+
+
+On a quick side-note, the downside to multi-dimensional data is that it even with dimensionality reduction it can be difficult to explain the importance of the different variables. PCA on the seasonal data shows that the components are difficult to interpret:
 
 ```{r}
 seasonal_pca <- prcomp(seasonal %>% select(-Name), scale = TRUE, center = TRUE)
 
-summary(seasonal_pca)
-
-seasonal_pca_data <- seasonal_pca$x %>%
-  as_tibble() %>%
-  select(PC1, PC2, PC3)
-
 seasonal_loadings <- seasonal_pca$rotation %>%
   as_tibble() %>%
   select(PC1, PC2, PC3) %>%
-  mutate(Var = seasonal %>% select(-Name) %>% colnames(.))
+  mutate(Var = seasonal %>% select(-Name) %>% colnames(.)) %>%
+  mutate_if(is.numeric, round, 4)
 
-ggplot(seasonal_pca_data, aes(PC1, PC2, color = PC3)) + 
-  geom_jitter() + 
-  geom_text_repel(aes(label = seasonal$Name))
+seasonal_loadings
+```
 
+
+#### Hierarchical clustering in R
+
+Again, a straightforward task to implement. I used the seasonal data here because additional variables are better for discriminating the different cities.
+
+```{r}
 seasonal_hclust <- seasonal %>%
   select(-Name) %>%
   scale() %>%
@@ -191,22 +187,45 @@ seasonal_hclust <- seasonal %>%
 plot(seasonal_hclust, label = seasonal$Name)
 ```
 
+Key observations: 
+* Portland and Seattle are very unlike other cities
+
+* Clustering is quite geographic, except for Pacifica, and Milbrae. 
+
+* Woodside has a weird climate
+
+
+As mentioned earlier, Portland and Seattle are the only two cities in this sample with snow, and there's not that much of it (snowfall in Portland happens a couple of times in the winter, but isn't really representative of the median winter weather conditions). I removed snowfall entirely to see if there would be any change in similarity based on just the seasonal maximum & minimum temperatures and precipitation. However, it looks like that change didn't affect the clustering.   
+
 ```{r}
-annual_pca <- prcomp(annual %>% select(-Name), scale = TRUE, center = TRUE)
+seasonal_hclust_no_snow <- seasonal %>%
+  select(-Name, -matches("SNOW")) %>%
+  scale() %>%
+  dist() %>%
+  hclust()
 
-summary(annual_pca)
+plot(seasonal_hclust_no_snow, label = seasonal$Name)
 
-annual_pca_data <- annual_pca$x %>%
-  as_tibble() %>%
-  select(PC1, PC2)
+seasonal$clust <- cutree(seasonal_hclust_no_snow, 5)
 
-annual_loadings <- annual_pca$rotation %>%
-  as_tibble() %>%
-  select(PC1, PC2, PC3) %>%
-  mutate(Var = annual %>% select(-Name) %>% colnames(.))
 
-ggplot(annual_pca_data, aes(PC1, PC2)) + 
-  geom_point() + 
-  geom_text_repel(aes(label = annual$Name))
+# ggradar
+set.seed(2)
+clusters <- seasonal %>%
+  group_by(clust) %>%
+  sample_n(1) %>%
+  select(Name, everything())
+
 
 ```
+
+
+## Conclusions
+
+* Portland weather is most similar to Seattle
+
+* Zoom in on distinct weather differences between the regions (cooler in the summer, warmer in the winter). 
+
+* Expand on the seasonal differences between the cities
+
+* Radar chart 
